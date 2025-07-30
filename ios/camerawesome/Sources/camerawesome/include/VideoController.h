@@ -49,6 +49,10 @@ typedef void(^OnVideoWriterSetup)(void);
 - (void)setAudioIsDisconnected:(bool)audioIsDisconnected;
 - (void)setPreviewSize:(CGSize)previewSize;
 
+// High frame rate methods
+- (BOOL)setupHighFrameRateFormat:(NSNumber *)fps;
+- (BOOL)deviceSupportsFrameRate:(int)fps;
+
 @end
 
 NS_ASSUME_NONNULL_END
