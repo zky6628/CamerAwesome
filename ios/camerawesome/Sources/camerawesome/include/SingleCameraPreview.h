@@ -104,6 +104,9 @@ AVCaptureAudioDataOutputSampleBufferDelegate>
 - (CGSize)getEffectivPreviewSize;
 - (void)setUpCaptureSessionForAudioError:(nonnull void (^)(NSError *))error;
 - (void)setBrightness:(NSNumber *)brightness error:(FlutterError * _Nullable __autoreleasing * _Nonnull)error;
+
+/// TODO: 待做 fps
+- (BOOL)setFPS:(nullable NSNumber *)fps;
 @end
 
 NS_ASSUME_NONNULL_END

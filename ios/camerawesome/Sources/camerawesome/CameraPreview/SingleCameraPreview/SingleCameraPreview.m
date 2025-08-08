@@ -169,6 +169,7 @@
 }
 
 - (void)dealloc {
+  [_videoController cleanupVideoWriterResources];
   [self.motionController startMotionDetection];
 }
 
@@ -475,6 +476,15 @@
   }
 }
 
+# pragma mark - TODO: Set capture fps
+- (BOOL)setFPS:(nullable NSNumber *)fps {
+  if (_videoController.isRecording) {
+    return NO;
+  }
+//  [_videoController set]
+  return YES;
+}
+
 - (void)refresh {
   if ([_captureSession isRunning]) {
     [self stop];
@@ -587,6 +597,17 @@
   
   [_captureSession commitConfiguration];
   completion(@(YES), nil);
+}
+
+/// 新增：恢复预览delegate设置到主队列 - 弃用
+- (void)restorePreviewDelegateSettings {
+  NSLog(@"🔄 开始恢复预览delegate设置到主队列");
+  
+  // 使用同步操作确保立即生效
+  dispatch_sync(dispatch_get_main_queue(), ^{
+    [self->_captureVideoOutput setSampleBufferDelegate:self queue:dispatch_get_main_queue()];
+    NSLog(@"✅ 预览delegate已恢复到主队列");
+  });
 }
 
 # pragma mark - Audio

@@ -50,8 +50,8 @@ typedef void(^OnVideoWriterSetup)(void);
 - (void)setPreviewSize:(CGSize)previewSize;
 
 // High frame rate methods
-- (BOOL)setupHighFrameRateFormat:(NSNumber *)fps;
-- (BOOL)deviceSupportsFrameRate:(int)fps;
+//- (BOOL)setupHighFrameRateFormat:(NSNumber *)fps;
+- (void)cleanupVideoWriterResources;
 
 @end
 

@@ -9,7 +9,10 @@
 
 FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
 
-@implementation VideoController
+@implementation VideoController {
+  AVCaptureDeviceFormat *_targetFormat;
+  NSNumber *_currentFPS;
+}
 
 - (instancetype)init {
   self = [super init];
@@ -24,14 +27,32 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
 
 /// Start recording video at given path
 - (void)recordVideoAtPath:(NSString *)path captureDevice:(AVCaptureDevice *)device orientation:(NSInteger)orientation audioSetupCallback:(OnAudioSetup)audioSetupCallback videoWriterCallback:(OnVideoWriterSetup)videoWriterCallback options:(CupertinoVideoOptions *)options quality:(VideoRecordingQuality)quality completion:(nonnull void (^)(FlutterError * _Nullable))completion {
+  
+  NSLog(@"🎬 准备开始录制视频，路径: %@", path);
+  
+  // 检查当前状态
+  if (_isRecording) {
+    NSLog(@"⚠️ 当前已在录制中，无法开始新录制");
+    completion([FlutterError errorWithCode:@"VIDEO_ERROR" message:@"already recording" details: path]);
+    return;
+  }
+  
+  // 确保之前的资源已清理
+  if (_videoWriter != nil) {
+    NSLog(@"⚠️ 检测到残留的VideoWriter，先清理资源");
+    [self cleanupVideoWriterResources];
+  }
+  
   _options = options;
   _recordingQuality = quality;
   
   // Create audio & video writer
   if (![self setupWriterForPath:path audioSetupCallback:audioSetupCallback options:options completion:completion]) {
+    NSLog(@"❌ 设置VideoWriter失败");
     completion([FlutterError errorWithCode:@"VIDEO_ERROR" message:@"impossible to write video at path" details:path]);
     return;
   }
+  
   // Call parent to add delegates for video & audio (if needed)
   videoWriterCallback();
   
@@ -43,34 +64,20 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
   _orientation = orientation;
   _captureDevice = device;
   
+  NSLog(@"✅ 录制状态设置完成，开始处理FPS设置");
+  
   // Change video FPS if provided
   if (_options && _options.fps != nil && _options.fps > 0) {
-    int targetFPS = [_options.fps intValue];
-    
-    // Check device support first
-    if (![self deviceSupportsFrameRate:targetFPS]) {
-      NSLog(@"⚠️ Device doesn't support %dfps, using default frame rate", targetFPS);
-    } else {
-      // Use appropriate method based on frame rate
-      if (targetFPS > 60) {
-        BOOL success = [self setupHighFrameRateFormat:_options.fps];
-        if (!success) {
-          NSLog(@"⚠️ Failed to set high frame rate, falling back to standard method");
-          [self adjustCameraFPS:_options.fps];
-        }
-      } else {
-        [self adjustCameraFPS:_options.fps];
-      }
-    }
+    [self safeSetFrameRate: _options.fps];
   }
 }
 
 /// Stop recording video
 - (void)stopRecordingVideo:(nonnull void (^)(NSNumber * _Nullable, FlutterError * _Nullable))completion {
-  if (_options && _options.fps != nil && _options.fps > 0) {
-    // Reset camera FPS
-    [self adjustCameraFPS:@(30)];
-  }
+  //  if (_options && _options.fps != nil && _options.fps > 0) {
+  //    // Reset camera FPS
+  //    [self adjustCameraFPS:@(30)];
+  //  }
   
   if (_isRecording) {
     _isRecording = NO;
@@ -124,44 +131,44 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
   } mutableCopy];
   
   // Enhanced settings for high frame rate videos
-//  if (options && options.fps && [options.fps intValue] > 60) {
-//    int fps = [options.fps intValue];
-//    
-//    // Calculate bitrate based on resolution and frame rate
-//    // Base bitrate: resolution * fps * quality factor
-//    double baseBitrate = videoSize.width * videoSize.height * fps * 0.5;
-//    
-//    // Adjust bitrate based on frame rate
-//    double bitrate;
-//    if (fps >= 240) {
-//      bitrate = baseBitrate * 0.8; // Slightly reduce for very high frame rates
-//    } else if (fps >= 120) {
-//      bitrate = baseBitrate * 0.9;
-//    } else {
-//      bitrate = baseBitrate;
-//    }
-//    
-//    // Set minimum and maximum bitrates
-//    double minBitrate = bitrate * 0.5;
-//    double maxBitrate = bitrate * 1.5;
-//    
-//    NSDictionary *compressionProperties = @{
-//      AVVideoAverageBitRateKey: @(bitrate),
-//      AVVideoMaxKeyFrameIntervalKey: @(fps * 2), // Key frame every 2 seconds
-//      AVVideoMaxKeyFrameIntervalDurationKey: @(2.0),
-//      AVVideoAllowFrameReorderingKey: @(NO), // Disable frame reordering for real-time
-//      AVVideoH264EntropyModeKey: AVVideoH264EntropyModeCABAC, // Better compression
-//      AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel, // High profile for better quality
-//    };
-//    
-//    videoSettings[AVVideoCompressionPropertiesKey] = compressionProperties;
-//    
-//    NSLog(@"🎬 High frame rate video settings:");
-//    NSLog(@"   📊 Bitrate: %.0f kbps (min: %.0f, max: %.0f)",
-//          bitrate/1000, minBitrate/1000, maxBitrate/1000);
-//    NSLog(@"   📐 Resolution: %.0fx%.0f", videoSize.width, videoSize.height);
-//    NSLog(@"   🎥 Frame rate: %d fps", fps);
-//  }
+  //  if (options && options.fps && [options.fps intValue] > 60) {
+  //    int fps = [options.fps intValue];
+  //
+  //    // Calculate bitrate based on resolution and frame rate
+  //    // Base bitrate: resolution * fps * quality factor
+  //    double baseBitrate = videoSize.width * videoSize.height * fps * 0.5;
+  //
+  //    // Adjust bitrate based on frame rate
+  //    double bitrate;
+  //    if (fps >= 240) {
+  //      bitrate = baseBitrate * 0.8; // Slightly reduce for very high frame rates
+  //    } else if (fps >= 120) {
+  //      bitrate = baseBitrate * 0.9;
+  //    } else {
+  //      bitrate = baseBitrate;
+  //    }
+  //
+  //    // Set minimum and maximum bitrates
+  //    double minBitrate = bitrate * 0.5;
+  //    double maxBitrate = bitrate * 1.5;
+  //
+  //    NSDictionary *compressionProperties = @{
+  //      AVVideoAverageBitRateKey: @(bitrate),
+  //      AVVideoMaxKeyFrameIntervalKey: @(fps * 2), // Key frame every 2 seconds
+  //      AVVideoMaxKeyFrameIntervalDurationKey: @(2.0),
+  //      AVVideoAllowFrameReorderingKey: @(NO), // Disable frame reordering for real-time
+  //      AVVideoH264EntropyModeKey: AVVideoH264EntropyModeCABAC, // Better compression
+  //      AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel, // High profile for better quality
+  //    };
+  //
+  //    videoSettings[AVVideoCompressionPropertiesKey] = compressionProperties;
+  //
+  //    NSLog(@"🎬 High frame rate video settings:");
+  //    NSLog(@"   📊 Bitrate: %.0f kbps (min: %.0f, max: %.0f)",
+  //          bitrate/1000, minBitrate/1000, maxBitrate/1000);
+  //    NSLog(@"   📐 Resolution: %.0fx%.0f", videoSize.width, videoSize.height);
+  //    NSLog(@"   🎥 Frame rate: %d fps", fps);
+  //  }
   
   _videoWriterInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo outputSettings:videoSettings];
   [_videoWriterInput setTransform:[self getVideoOrientation]];
@@ -260,8 +267,38 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
   return sout;
 }
 
+- (BOOL)safeSetFrameRate:(NSNumber *)fps {
+  
+  int targetFPS = [fps intValue];
+  
+  if(_captureDevice.activeFormat == _targetFormat) {
+    NSLog(@"✅ activeFormat: %d", _captureDevice.activeFormat == _targetFormat);
+    return YES;
+  }
+  
+  // Check device support first
+  if (![self deviceSupportsFrameRate: targetFPS]) {
+    NSLog(@"⚠️ Device doesn't support %dfps, using default frame rate", targetFPS);
+    return NO;
+  } else {
+    // Use appropriate method based on frame rate
+    if (targetFPS > 60) {
+      BOOL success = [self setupHighFrameRateFormat: fps];
+      if (!success) {
+        NSLog(@"⚠️ Failed to set high frame rate, falling back to standard method");
+        return [self adjustCameraFPS: fps];
+      }
+      return YES;
+    } else {
+      return [self adjustCameraFPS: fps];
+    }
+  }
+  return NO;
+}
+
 /// Adjust video preview & recording to specified FPS
-- (void)adjustCameraFPS:(NSNumber *)fps {
+- (BOOL)adjustCameraFPS:(NSNumber *)fps {
+  
   NSArray *frameRateRanges = _captureDevice.activeFormat.videoSupportedFrameRateRanges;
   
   if (frameRateRanges.count > 0) {
@@ -275,8 +312,10 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
         _captureDevice.activeVideoMaxFrameDuration = frameDuration;
       }
       [_captureDevice unlockForConfiguration];
+      return YES;
     }
   }
+  return NO;
 }
 
 /// Check if device supports the specified frame rate
@@ -294,12 +333,6 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
 /// Setup high frame rate format for fps > 60
 - (BOOL)setupHighFrameRateFormat:(NSNumber *)fps {
   int targetFPS = [fps intValue];
-  
-  // Only for high frame rate (>60fps)
-  if (targetFPS <= 60) {
-    [self adjustCameraFPS:fps];
-    return YES;
-  }
   
   NSLog(@"Setting up high frame rate: %dfps", targetFPS);
   
@@ -363,7 +396,10 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
     
     if (bestFormat && bestRange) {
       // Set the best format
-      _captureDevice.activeFormat = bestFormat;
+      _targetFormat = bestFormat;
+      if(_captureDevice.activeFormat != bestFormat) {
+        _captureDevice.activeFormat = bestFormat;
+      }
       
       // Set frame rate
       CMTime frameDuration = CMTimeMake(1, targetFPS);
@@ -596,6 +632,42 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
 
 - (void)setAudioIsDisconnected:(bool)audioIsDisconnected {
   _audioIsDisconnected = audioIsDisconnected;
+}
+
+/// 清理VideoWriter相关资源，防止资源泄漏和状态混乱
+- (void)cleanupVideoWriterResources {
+  NSLog(@"🧹 开始清理VideoController资源");
+  
+  // 安全清理VideoWriter及其相关资源
+  if (_videoWriter) {
+    NSLog(@"🧹 清理VideoWriter，当前状态: %ld", (long)_videoWriter.status);
+    _videoWriter = nil;
+  }
+  
+  if (_videoWriterInput) {
+    NSLog(@"🧹 清理VideoWriterInput");
+    _videoWriterInput = nil;
+  }
+  
+  if (_audioWriterInput) {
+    NSLog(@"🧹 清理AudioWriterInput");
+    _audioWriterInput = nil;
+  }
+  
+  if (_videoAdaptor) {
+    NSLog(@"🧹 清理VideoAdaptor");
+    _videoAdaptor = nil;
+  }
+  
+  // 重置时间偏移
+  _videoTimeOffset = CMTimeMake(0, 1);
+  _audioTimeOffset = CMTimeMake(0, 1);
+  
+  // 重置连接状态
+  _videoIsDisconnected = NO;
+  _audioIsDisconnected = NO;
+  
+  NSLog(@"✅ VideoController资源清理完成");
 }
 
 @end
