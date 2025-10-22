@@ -68,7 +68,9 @@ NSInteger const MaxPendingProcessedImage = 4;
     }
     
     NSNumber *length = @(bytesPerRow * height);
-    NSData *bytes = [NSData dataWithBytes:planeAddress length:length.unsignedIntegerValue];
+//    NSData *bytes = [NSData dataWithBytes:planeAddress length:length.unsignedIntegerValue];
+    // 🔧 关键修复：使用深拷贝确保数据安全
+    NSData *bytes = [[NSData alloc] initWithBytes:planeAddress length:length.unsignedIntegerValue];
     
     [planes addObject:@{
       @"bytesPerRow": @(bytesPerRow),
@@ -88,9 +90,21 @@ NSInteger const MaxPendingProcessedImage = 4;
     @"rotation": [self getInputImageOrientation:orientation]
   };
   
-  dispatch_async(dispatch_get_main_queue(), ^{
-    self->_imageStreamEventSink(imageBuffer);
-  });
+//  dispatch_async(dispatch_get_main_queue(), ^{
+//    self->_imageStreamEventSink(imageBuffer);
+//  });
+  // 🔧 关键修复：保护 eventSink 的线程安全访问
+  FlutterEventSink eventSink = _imageStreamEventSink;
+  if (eventSink) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      eventSink(imageBuffer);
+    });
+  } else {
+    // 如果 eventSink 已经为空，减少处理计数
+    if (self->_processingImage > 0) {
+      self->_processingImage--;
+    }
+  }
   
 }
 

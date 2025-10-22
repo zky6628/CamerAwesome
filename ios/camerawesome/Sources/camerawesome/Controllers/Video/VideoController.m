@@ -79,19 +79,61 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
   //    [self adjustCameraFPS:@(30)];
   //  }
   
-  if (_isRecording) {
-    _isRecording = NO;
-    if (_videoWriter.status != AVAssetWriterStatusUnknown) {
-      [_videoWriter finishWritingWithCompletionHandler:^{
-        if (self->_videoWriter.status == AVAssetWriterStatusCompleted) {
-          completion(@(YES), nil);
-        } else {
-          completion(@(NO), [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"impossible to completely write video" details:@""]);
-        }
-      }];
-    }
-  } else {
+  //  if (_isRecording) {
+  //    _isRecording = NO;
+  //    if (_videoWriter.status != AVAssetWriterStatusUnknown) {
+  //      [_videoWriter finishWritingWithCompletionHandler:^{
+  //        if (self->_videoWriter.status == AVAssetWriterStatusCompleted) {
+  //          completion(@(YES), nil);
+  //        } else {
+  //          completion(@(NO), [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"impossible to completely write video" details:@""]);
+  //        }
+  //      }];
+  //    }
+  //  } else {
+  //    completion(@(NO), [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"video is not recording" details:@""]);
+  //  }
+  
+  // 🔧 关键修复5：立即设置停止标志，防止新帧进入
+  if (!_isRecording) {
     completion(@(NO), [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"video is not recording" details:@""]);
+    return;
+  }
+  
+  NSLog(@"🛑 准备停止录制，当前VideoWriter状态: %ld", (long)_videoWriter.status);
+  
+  // 立即设置标志，阻止新帧进入处理流程
+  _isRecording = NO;
+  
+  NSLog(@"🛑 已设置 isRecording = NO，等待 writer 完成");
+  
+  // 🔧 关键修复6：确保 videoWriter 存在且状态正确
+  if (_videoWriter == nil) {
+    NSLog(@"⚠️ VideoWriter 为 nil，无法正常停止");
+    completion(@(NO), [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"video writer is nil" details:@""]);
+    return;
+  }
+  
+  if (_videoWriter.status == AVAssetWriterStatusUnknown) {
+    NSLog(@"⚠️ VideoWriter 状态为 Unknown，可能未正常启动");
+    completion(@(NO), [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"video writer not started" details:@""]);
+    return;
+  }
+  
+  if (_videoWriter.status == AVAssetWriterStatusWriting) {
+    NSLog(@"✅ VideoWriter 状态正常，开始 finishWriting");
+    [_videoWriter finishWritingWithCompletionHandler:^{
+      NSLog(@"✅ VideoWriter 完成写入，最终状态: %ld", (long)self->_videoWriter.status);
+      if (self->_videoWriter.status == AVAssetWriterStatusCompleted) {
+        completion(@(YES), nil);
+      } else {
+        NSLog(@"❌ VideoWriter 写入失败: %@", self->_videoWriter.error);
+        completion(@(NO), [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"impossible to completely write video" details:self->_videoWriter.error.localizedDescription]);
+      }
+    }];
+  } else {
+    NSLog(@"⚠️ VideoWriter 状态异常: %ld", (long)_videoWriter.status);
+    completion(@(NO), [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"video writer in invalid state" details:@""]);
   }
 }
 
@@ -238,13 +280,25 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
 
 /// Append audio data
 - (void)newAudioSample:(CMSampleBufferRef)sampleBuffer {
+  
+  // 修复：首先检查是否正在录制
+  if (!_isRecording) {
+    return;
+  }
+  
   if (_videoWriter.status != AVAssetWriterStatusWriting) {
     if (_videoWriter.status == AVAssetWriterStatusFailed) {
       //      *error = [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"writing video failed" details:_videoWriter.error];
     }
     return;
   }
-  if (_audioWriterInput.readyForMoreMediaData) {
+//  if (_audioWriterInput.readyForMoreMediaData) {
+//    if (![_audioWriterInput appendSampleBuffer:sampleBuffer]) {
+//      //      *error = [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"adding audio channel failed" details:_videoWriter.error];
+//    }
+//  }
+  // 修复：添加状态检查
+  if (_audioWriterInput.readyForMoreMediaData && _isRecording) {
     if (![_audioWriterInput appendSampleBuffer:sampleBuffer]) {
       //      *error = [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"adding audio channel failed" details:_videoWriter.error];
     }
@@ -440,12 +494,22 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
 # pragma mark - Camera Delegates
 - (void)captureOutput:(AVCaptureOutput *)output didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer fromConnection:(AVCaptureConnection *)connection captureVideoOutput:(AVCaptureVideoDataOutput *)captureVideoOutput {
   
+  // 关键修复1：首先检查是否正在录制
+  if (!_isRecording) {
+    return;
+  }
+  
   if (self.isPaused) {
     return;
   }
   
-  if (_videoWriter.status == AVAssetWriterStatusFailed) {
-    //    _result([FlutterError errorWithCode:@"VIDEO_ERROR" message:@"impossible to write video " details:_videoWriter.error]);
+//  if (_videoWriter.status == AVAssetWriterStatusFailed) {
+//    //    _result([FlutterError errorWithCode:@"VIDEO_ERROR" message:@"impossible to write video " details:_videoWriter.error]);
+//    return;
+//  }
+  
+  // 关键修复2：检查 videoWriter 是否处于有效状态
+  if (_videoWriter == nil || _videoWriter.status == AVAssetWriterStatusFailed || _videoWriter.status == AVAssetWriterStatusCompleted || _videoWriter.status == AVAssetWriterStatusCancelled) {
     return;
   }
   
@@ -453,9 +517,17 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
   CMTime currentSampleTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
   
   if (_videoWriter.status != AVAssetWriterStatusWriting) {
-    [_videoWriter startWriting];
-    [_videoWriter startSessionAtSourceTime:currentSampleTime];
+    // 关键修复3：只在 Unknown 状态时启动 session
+    if (_videoWriter.status == AVAssetWriterStatusUnknown) {
+      [_videoWriter startWriting];
+      [_videoWriter startSessionAtSourceTime:currentSampleTime];
+    } else {
+      // 状态不对，直接返回
+      CFRelease(sampleBuffer);
+      return;
+    }
   }
+  
   
   if (output == captureVideoOutput) {
     if (_videoIsDisconnected) {
@@ -468,6 +540,8 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
         _videoTimeOffset = CMTimeAdd(_videoTimeOffset, offset);
       }
       
+      // 修复：释放 sampleBuffer
+      CFRelease(sampleBuffer);
       return;
     }
     
@@ -475,7 +549,10 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
     
     CVPixelBufferRef nextBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
     CMTime nextSampleTime = CMTimeSubtract(_lastVideoSampleTime, _videoTimeOffset);
-    [_videoAdaptor appendPixelBuffer:nextBuffer withPresentationTime:nextSampleTime];
+    // 关键修复4：在写入前再次确认状态和录制标志
+    if (_videoWriterInput.readyForMoreMediaData && _isRecording && _videoWriter.status == AVAssetWriterStatusWriting) {
+      [_videoAdaptor appendPixelBuffer:nextBuffer withPresentationTime:nextSampleTime];
+    }
   } else {
     CMTime dur = CMSampleBufferGetDuration(sampleBuffer);
     
@@ -492,6 +569,8 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
         _audioTimeOffset = CMTimeAdd(_audioTimeOffset, offset);
       }
       
+      // 修复：释放 sampleBuffer
+      CFRelease(sampleBuffer);
       return;
     }
     
@@ -502,7 +581,11 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
       sampleBuffer = [self adjustTime:sampleBuffer by:_audioTimeOffset];
     }
     
-    [self newAudioSample:sampleBuffer];
+//    [self newAudioSample:sampleBuffer];
+    // 修复：只在录制时处理音频
+    if (_isRecording) {
+      [self newAudioSample:sampleBuffer];
+    }
   }
   
   CFRelease(sampleBuffer);
