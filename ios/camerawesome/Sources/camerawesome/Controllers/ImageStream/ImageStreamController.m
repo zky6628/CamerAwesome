@@ -7,7 +7,9 @@
 
 #import "ImageStreamController.h"
 
-@implementation ImageStreamController
+@implementation ImageStreamController {
+    NSDate *_lastAttemptedEmitTime;  // 记录上次尝试发送的时间
+}
 
 NSInteger const MaxPendingProcessedImage = 4;
 
@@ -15,6 +17,7 @@ NSInteger const MaxPendingProcessedImage = 4;
   self = [super init];
   _streamImages = streamImages;
   _processingImage = 0;
+  _lastAttemptedEmitTime = [NSDate date];  // 初始化
   return self;
 }
 
@@ -30,6 +33,8 @@ NSInteger const MaxPendingProcessedImage = 4;
   if (shouldFPSGuard || shouldOverflowCrashingGuard) {
     return;
   }
+  // 关键改进：在这里更新尝试发送时间
+  _lastAttemptedEmitTime = [NSDate date];
   
   _processingImage++;
   
@@ -128,7 +133,8 @@ NSInteger const MaxPendingProcessedImage = 4;
 - (bool)fpsGuard {
   // calculate time interval between latest emitted frame
   NSDate *nowDate = [NSDate date];
-  NSTimeInterval secondsBetween = [nowDate timeIntervalSinceDate:_latestEmittedFrame];
+  // 关键改进：使用尝试发送的时间
+  NSTimeInterval secondsBetween = [nowDate timeIntervalSinceDate:_lastAttemptedEmitTime];
   
   // fps limit check, ignored if nil or == 0
   if (_maxFramesPerSecond && _maxFramesPerSecond > 0) {

@@ -559,7 +559,17 @@
 /// Stop recording video
 - (void)stopRecordingVideo:(nonnull void (^)(NSNumber * _Nullable, FlutterError * _Nullable))completion {
   if (_videoController.isRecording) {
-    [_videoController stopRecordingVideo:completion];
+    [_videoController stopRecordingVideo:^(NSNumber * _Nullable success, FlutterError * _Nullable error) {
+      // 关键修复：停止录制后恢复delegate到主队列
+      if (success && [success boolValue]) {
+        NSLog(@"🔄 恢复预览delegate到主队列");
+        dispatch_async(dispatch_get_main_queue(), ^{
+          [self->_captureVideoOutput setSampleBufferDelegate:self queue:dispatch_get_main_queue()];
+        });
+      }
+      
+      completion(success, error);
+    }];
   } else {
     completion(@(NO), [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"video is not recording" details:@""]);
   }
